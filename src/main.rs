@@ -99,6 +99,67 @@ impl TypeUF {
     fn len(&self) -> usize {
         self.nodes.len()
     }
+
+    fn naming(
+        &mut self,
+        root: &TypeIdx,
+        idgen: &mut impl Iterator<Item = String>,
+        name: &mut Vec<Option<String>>,
+        visit: &mut Vec<bool>,
+    ) {
+        let root = self.find(&root);
+
+        if visit[root.0] {
+            // already visited.
+            if name[root.0].is_none() {
+                // if not naming yet, naming the loop.
+                let r = idgen.next().unwrap();
+                name[root.0] = Some(r);
+            }
+            return;
+        }
+
+        visit[root.0] = true;
+
+        match self[&root].clone() {
+            Type::Var => {
+                // naming variable
+                let r = idgen.next().unwrap();
+                name[root.0] = Some(r);
+            }
+            Type::Int => {
+                () // do nothing
+            }
+            Type::Arr(l, r) => {
+                self.naming(&l, idgen, name, visit);
+                self.naming(&r, idgen, name, visit);
+            }
+        }
+    }
+
+    fn to_string(&mut self, root: &TypeIdx, name: &[Option<String>], visit: &mut [bool]) -> String {
+        let root = self.find(root);
+
+        if visit[root.0] {
+            return name[root.0].clone().unwrap();
+        }
+
+        visit[root.0] = true;
+
+        match self[&root].clone() {
+            Type::Var => name[root.0].clone().unwrap(),
+            Type::Int => "Int".into(),
+            Type::Arr(l, r) => {
+                let l = self.to_string(&l, name, visit);
+                let r = self.to_string(&r, name, visit);
+                if let Some(a) = name[root.0].clone() {
+                    format!("({} -> {} as {})", l, r, a)
+                } else {
+                    format!("({} -> {})", l, r)
+                }
+            }
+        }
+    }
 }
 
 impl Index<&TypeIdx> for TypeUF {
@@ -171,17 +232,22 @@ impl TypeInfer {
         self.infer(e, &mut HashMap::new())
     }
 
-    fn print(&mut self, t: TypeIdx) {
+    fn print(&mut self, t: &TypeIdx) {
+        let mut name = vec![None; self.uf.len()];
+        let mut idgen = (97u8..=122).map(|i| String::from_utf8(vec![i]).unwrap());
+        self.uf
+            .naming(t, &mut idgen, &mut name, &mut vec![false; self.uf.len()]);
+        let s = self.uf.to_string(t, &name, &mut vec![false; self.uf.len()]);
         println!("root: {:?}", t);
         println!("UF:[{:#?}]", self.uf);
-        //let mut name = vec![None; self.uf.len()];
-        //let mut visited = vec![false; self.uf.len()];
+        println!("name:[{:#?}]", name);
+        println!("type:{}", s);
     }
 }
 
 fn main() -> Result<(), ()> {
     use Expr::*;
-    let e1 = Lam(
+    /*let e1 = Lam(
         "x".into(),
         Box::new(App(Box::new(Var("x".into())), Box::new(Var("x".into())))),
     );
@@ -189,16 +255,27 @@ fn main() -> Result<(), ()> {
         "x".into(),
         Box::new(App(Box::new(Var("x".into())), Box::new(Var("x".into())))),
     );
-    let e = App(Box::new(e1), Box::new(e2));
-    let e = Lam(
-        "x".into(),
+    let e = App(Box::new(e1), Box::new(e2));*/
+
+    // \x. x (\y. y y x) x
+    // \x. (x (\y. (y y) x)) x
+    let e0 = Lam(
+        "y".into(),
         Box::new(App(
-            Box::new(App(Box::new(Var("x".into())), Box::new(Var("x".into())))),
+            Box::new(App(Box::new(Var("y".into())), Box::new(Var("y".into())))),
             Box::new(Var("x".into())),
         )),
     );
+    let e = Lam(
+        "x".into(),
+        Box::new(App(
+            Box::new(App(Box::new(Var("x".into())), Box::new(e0))),
+            Box::new(Var("x".into())),
+        )),
+    );
+
     let mut ctx = TypeInfer::new();
     let ty = ctx.typing(&e)?;
-    ctx.print(ty);
+    ctx.print(&ty);
     Ok(())
 }
